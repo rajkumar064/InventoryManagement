@@ -1981,6 +1981,7 @@ function onPaymentMethodChange() {
 const CREDIT_STORAGE_KEY = 'rk_credit_payments_v2';
 let _creditOutstanding = [];   // [{name,phone,invoiceCount,totalPurchased,totalCredit,amountPaid,balance,lastDate,invoices[]}]
 let _creditSettled     = [];   // [{name,phone,totalPurchased,amountPaid,settledOn,payMode}]
+let _currentCreditView = [];   // the currently-rendered outstanding slice (after search filter)
 let _creditTab         = 'outstanding';
 let _payTarget         = null; // customer being paid right now
 
@@ -2135,8 +2136,9 @@ function _renderCreditKPIs() {
   if (dashEl) dashEl.textContent = '₹' + _fmt(totalDue);
 }
 
-/* ── Table renders — DocumentFragment for zero reflow thrashing ── */
+/* ── Table renders — data-idx for safe event delegation, no inline JSON ── */
 function renderCreditTable(data) {
+  _currentCreditView = data;   // always keep reference for button handlers
   const body = document.getElementById('creditSummaryBody');
   if (!data.length) {
     body.innerHTML = '<tr><td colspan="9"><div class="empty-state"><div class="empty-state-icon">🎉</div>No outstanding credit — all clear!</div></td></tr>';
@@ -2145,21 +2147,19 @@ function renderCreditTable(data) {
   const frag = document.createDocumentFragment();
   data.forEach((c, i) => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td class="mono" style="color:var(--ink3)">${i+1}</td>
-      <td><strong>${esc(c.name)}</strong></td>
-      <td class="mono">${esc(c.phone||'—')}</td>
-      <td class="mono">${c.invoiceCount}</td>
-      <td class="mono">₹${_fmt(c.totalPurchased)}</td>
-      <td class="mono" style="color:var(--green);font-weight:700;">₹${_fmt(c.amountPaid)}</td>
-      <td class="mono" style="color:#c82020;font-weight:700;">₹${_fmt(c.balance)}</td>
-      <td class="mono">${c.lastDate||'—'}</td>
-      <td>
-        <div style="display:flex;gap:4px;flex-wrap:wrap;">
-          <button class="btn btn-secondary btn-sm" onclick="showCreditDetail(${JSON.stringify(c._key)})">📋 View</button>
-          <button class="btn btn-green btn-sm" onclick="openPayNow(${JSON.stringify(c._key)})">💰 Pay</button>
-        </div>
-      </td>`;
+    tr.innerHTML =
+      '<td class="mono" style="color:var(--ink3)">' + (i+1) + '</td>' +
+      '<td><strong>' + esc(c.name) + '</strong></td>' +
+      '<td class="mono">' + esc(c.phone||'—') + '</td>' +
+      '<td class="mono">' + c.invoiceCount + '</td>' +
+      '<td class="mono">₹' + _fmt(c.totalPurchased) + '</td>' +
+      '<td class="mono" style="color:var(--green);font-weight:700;">₹' + _fmt(c.amountPaid) + '</td>' +
+      '<td class="mono" style="color:#c82020;font-weight:700;">₹' + _fmt(c.balance) + '</td>' +
+      '<td class="mono">' + (c.lastDate||'—') + '</td>' +
+      '<td><div style="display:flex;gap:4px;flex-wrap:wrap;">' +
+        '<button class="btn btn-secondary btn-sm cr-view-btn" data-idx="' + i + '">📋 View</button>' +
+        '<button class="btn btn-green btn-sm cr-pay-btn" data-idx="' + i + '">💰 Pay</button>' +
+      '</div></td>';
     frag.appendChild(tr);
   });
   body.innerHTML = '';
@@ -2225,8 +2225,8 @@ function filterCreditTable() {
 }
 
 /* ── Invoice detail panel ── */
-function showCreditDetail(key) {
-  const cust = _creditOutstanding.find(c => c._key === key);
+function showCreditDetail(idx) {
+  const cust = _currentCreditView[idx];
   if (!cust) return;
   document.getElementById('creditDetailTitle').textContent = `💳 Credit Invoices — ${cust.name}`;
   const body = document.getElementById('creditDetailBody');
@@ -2253,9 +2253,9 @@ function closeCreditDetail() { document.getElementById('creditDetailPanel').styl
 /* ══════════════════════════════════════════
    PAY NOW — SETTLEMENT FLOW
 ══════════════════════════════════════════ */
-function openPayNow(key) {
-  const cust = _creditOutstanding.find(c => c._key === key);
-  if (!cust) return;
+function openPayNow(idx) {
+  const cust = _currentCreditView[idx];
+  if (!cust) { showToast('Customer not found', 'error'); return; }
   _payTarget = cust;
 
   _set('payCustomerName',  cust.name);
@@ -2433,6 +2433,20 @@ document.addEventListener('DOMContentLoaded', () => {
 // ════════════════════════════════════════════════
 // INIT
 // ════════════════════════════════════════════════
+
+// Credit table event delegation — single listener on tbody, no onclick in HTML
+document.addEventListener('DOMContentLoaded', () => {
+  const creditBody = document.getElementById('creditSummaryBody');
+  if (creditBody) {
+    creditBody.addEventListener('click', function(e) {
+      const viewBtn = e.target.closest('.cr-view-btn');
+      const payBtn  = e.target.closest('.cr-pay-btn');
+      if (viewBtn) { showCreditDetail(parseInt(viewBtn.dataset.idx, 10)); }
+      if (payBtn)  { openPayNow(parseInt(payBtn.dataset.idx, 10)); }
+    });
+  }
+});
+
 document.addEventListener('DOMContentLoaded', async () => {
   try {
     const res = await apiCall('ping');
