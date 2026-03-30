@@ -216,6 +216,9 @@
   .legend-dot.yellow { background: var(--stock-yellow-bg); border-color: var(--stock-yellow-border); }
   .legend-dot.red    { background: var(--stock-red-bg);    border-color: var(--stock-red-border); }
 
+  .badge-credit { background: #fff0f0; color: #c82020; border-color: #f0a0a0; font-weight: 700; }
+  .badge-blue   { background: #e8f0fe; color: #1a4ab8; border-color: #a0b8f0; }
+
   /* ── PRINT ── */
   @media print {
     body * { visibility: hidden; }
@@ -268,6 +271,7 @@
       <div class="sidebar-item active" onclick="showPage('dashboard')"><span class="icon">📊</span> Dashboard</div>
       <div class="sidebar-item" onclick="showPage('invoice')"><span class="icon">🧾</span> New Invoice</div>
       <div class="sidebar-item" onclick="showPage('history')"><span class="icon">📜</span> Invoice History</div>
+      <div class="sidebar-item" onclick="showPage('credits')"><span class="icon">💳</span> Credit Customers</div>
     </div>
     <div class="sidebar-section">
       <div class="sidebar-label">Inventory</div>
@@ -322,6 +326,11 @@
         <div class="kpi-card yellow"><div class="kpi-label">🟡 Need Reorder</div><div class="kpi-value" id="kpiNeedReorder">—</div><div class="kpi-sub">avail ≤ reorder ÷ 2</div></div>
         <div class="kpi-card red"><div class="kpi-label" style="color:#c82020;">🔴 Out of Stock</div><div class="kpi-value" id="kpiOutOfStock" style="color:#c82020;">—</div><div class="kpi-sub">available &lt; 1</div></div>
         <div class="kpi-card"><div class="kpi-label">Qty Sold</div><div class="kpi-value" id="kpiQty">—</div><div class="kpi-sub">total units</div></div>
+        <div class="kpi-card red" style="cursor:pointer;" onclick="showPage('credits')" title="Click to view Credit Customers">
+          <div class="kpi-label" style="color:#c82020;">💳 Credit Due</div>
+          <div class="kpi-value small" id="kpiCreditDue" style="color:#c82020;">—</div>
+          <div class="kpi-sub">outstanding (click to view)</div>
+        </div>
       </div>
 
       <!-- Category Sales Summary -->
@@ -415,11 +424,16 @@
             <div class="form-group"><label>Invoice No</label><input type="text" id="invoiceNo" readonly></div>
             <div class="form-group"><label>Date &amp; Time</label><input type="text" id="invoiceDate" readonly></div>
             <div class="form-group"><label>Payment Method</label>
-              <select id="paymentMethod">
+              <select id="paymentMethod" onchange="onPaymentMethodChange()">
                 <option value="Cash">Cash</option>
                 <option value="Card">Card</option>
                 <option value="UPI">UPI</option>
+                <option value="Credit">💳 Credit (Pay Later)</option>
               </select>
+            </div>
+            <div class="form-group" id="creditNoteGroup" style="display:none;">
+              <label>Credit Note / Due Date (Optional)</label>
+              <input type="text" id="creditNote" placeholder="e.g. Pay by 15 Apr or any note">
             </div>
           </div>
         </div>
@@ -574,6 +588,75 @@
       <div class="card">
         <div class="card-title">📝 Import Log</div>
         <div id="importLog" style="font-family:var(--mono);font-size:11px;color:var(--ink3);line-height:2;">No import activity yet.</div>
+      </div>
+    </div>
+
+    <!-- ═══════════ CREDIT CUSTOMERS ═══════════ -->
+    <div id="page-credits" class="page">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Credit Customers</div>
+          <div class="page-sub">Outstanding credit balances &amp; purchase history</div>
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-secondary btn-sm" onclick="loadCreditCustomers()">↻ Refresh</button>
+          <button class="btn btn-green btn-sm" onclick="exportCreditToExcel()">📊 Export Excel</button>
+        </div>
+      </div>
+
+      <!-- Credit KPIs -->
+      <div class="kpi-grid" style="grid-template-columns:repeat(auto-fill,minmax(180px,1fr));margin-bottom:24px;">
+        <div class="kpi-card red"><div class="kpi-label" style="color:#c82020;">Total Credit Due</div><div class="kpi-value" id="kpiCreditTotal" style="color:#c82020;">—</div><div class="kpi-sub">unpaid credit amount</div></div>
+        <div class="kpi-card"><div class="kpi-label">Credit Customers</div><div class="kpi-value" id="kpiCreditCount">—</div><div class="kpi-sub">unique customers</div></div>
+        <div class="kpi-card yellow"><div class="kpi-label">Credit Invoices</div><div class="kpi-value" id="kpiCreditInvoices">—</div><div class="kpi-sub">pending transactions</div></div>
+        <div class="kpi-card green"><div class="kpi-label">Avg Credit / Customer</div><div class="kpi-value small" id="kpiCreditAvg">—</div><div class="kpi-sub">average outstanding</div></div>
+      </div>
+
+      <!-- Search -->
+      <div class="search-bar">
+        <input type="text" placeholder="Search customer name or phone..." id="creditSearch" oninput="filterCreditTable()" style="max-width:300px;">
+      </div>
+
+      <!-- Customer Summary Table -->
+      <div class="table-wrap" style="margin-bottom:20px;">
+        <div class="table-head"><div class="table-title">💳 Customer Credit Summary</div></div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Customer Name</th>
+                <th>Phone</th>
+                <th>Total Invoices</th>
+                <th>Total Purchased (₹)</th>
+                <th>Total Credit Due (₹)</th>
+                <th>Last Credit Date</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="creditSummaryBody">
+              <tr><td colspan="8"><div class="loading"><div class="spinner"></div></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Per-customer invoice detail (shown on expand) -->
+      <div id="creditDetailPanel" style="display:none;">
+        <div class="table-wrap">
+          <div class="table-head">
+            <div class="table-title" id="creditDetailTitle">Credit Invoices</div>
+            <button class="btn btn-secondary btn-sm" onclick="closeCreditDetail()">✕ Close</button>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr><th>Invoice ID</th><th>Date</th><th>Products</th><th>Total Amount (₹)</th><th>Credit Note</th><th>Status</th></tr>
+              </thead>
+              <tbody id="creditDetailBody"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -770,6 +853,7 @@ function showPage(name) {
   if (name === 'history')   loadInvoiceHistory();
   if (name === 'invoice')   initInvoicePage();
   if (name === 'settings')  loadSettingsForm();
+  if (name === 'credits')   loadCreditCustomers();
   closeSidebar();
 }
 
@@ -825,7 +909,7 @@ async function loadDashboard() {
   const to   = dateFilter.to   || new Date().toISOString().split('T')[0];
 
   // Loading states
-  ['kpiRevenue','kpiProfit','kpiInvoices','kpiAvg','kpiReorderSoon','kpiNeedReorder','kpiOutOfStock','kpiQty']
+  ['kpiRevenue','kpiProfit','kpiInvoices','kpiAvg','kpiReorderSoon','kpiNeedReorder','kpiOutOfStock','kpiQty','kpiCreditDue']
     .forEach(id => { const el = document.getElementById(id); if(el) el.textContent = '...'; });
 
   try {
@@ -871,6 +955,11 @@ async function loadDashboard() {
     const needReorder = allProducts.filter(p => stockTier(p.available, p.reorder) === 'NEED_REORDER').length;
     const reorderSoon = allProducts.filter(p => stockTier(p.available, p.reorder) === 'REORDER_SOON').length;
 
+    // Credit Due — always calculated from ALL invoices (not date-filtered)
+    const creditDue = allInvoices
+      .filter(inv => String(inv[6]).toLowerCase() === 'credit')
+      .reduce((s, inv) => s + (parseFloat(inv[4]) || 0), 0);
+
     document.getElementById('kpiRevenue').textContent    = '₹' + totalRevenue.toFixed(2);
     document.getElementById('kpiProfit').textContent     = '₹' + grossProfit.toFixed(2);
     document.getElementById('kpiInvoices').textContent   = numInvoices;
@@ -879,6 +968,8 @@ async function loadDashboard() {
     document.getElementById('kpiNeedReorder').textContent= needReorder;
     document.getElementById('kpiOutOfStock').textContent = outOfStock;
     document.getElementById('kpiQty').textContent        = qtySold.toFixed(0);
+    const creditEl = document.getElementById('kpiCreditDue');
+    if (creditEl) creditEl.textContent = '₹' + creditDue.toFixed(2);
 
     renderCategorySummary(filteredItems);
     renderBestSellers(filteredItems);
@@ -1297,17 +1388,23 @@ function updateTotals(sub, disc, grand) {
 
 async function saveInvoice() {
   if (invoiceItems.length === 0) { showToast('Add at least one item', 'error'); return; }
+  const payMethod = document.getElementById('paymentMethod').value;
   const invoiceData = {
     invoiceNo:     document.getElementById('invoiceNo').value,
     customerName:  document.getElementById('custName').value.trim()    || 'Walk-in Customer',
     customerPhone: document.getElementById('custPhone').value.trim()   || '',
     cashierName:   document.getElementById('cashierName').value.trim() || config.cashier,
-    paymentMethod: document.getElementById('paymentMethod').value,
+    paymentMethod: payMethod,
+    creditNote:    payMethod === 'Credit' ? (document.getElementById('creditNote').value.trim() || '') : '',
     items:         invoiceItems,
     totalAmount:   invoiceItems.reduce((s, i) => s + i.total, 0),
     discountTotal: invoiceItems.reduce((s, i) => s + i.disc,  0),
     date:          new Date().toISOString(),
   };
+  // Warn if credit customer name is empty
+  if (payMethod === 'Credit' && (!document.getElementById('custName').value.trim())) {
+    showToast('⚠ Please enter customer name for credit invoices', 'error'); return;
+  }
   showToast('Saving invoice...', '');
   const res = await apiPost('saveInvoice', invoiceData);
   if (res && res.success) {
@@ -1371,7 +1468,11 @@ function showReceiptModal(inv) {
         <div class="receipt-total-grand" style="margin-top:6px;">TOTAL: ₹${grand.toFixed(2)}</div>
       </div>
       <hr class="receipt-divider">
-      <div style="font-family:var(--mono);font-size:13px;padding:4px 0;"><strong>Payment:</strong> ${esc(inv.paymentMethod)} (Paid)</div>
+      <div style="font-family:var(--mono);font-size:13px;padding:4px 0;">
+        <strong>Payment:</strong> ${inv.paymentMethod === 'Credit'
+          ? '<span style="color:#c82020;font-weight:700;">💳 CREDIT — AMOUNT DUE (Unpaid)</span>' + (inv.creditNote ? `<br><span style="font-size:11px;">Note: ${esc(inv.creditNote)}</span>` : '')
+          : esc(inv.paymentMethod) + ' (Paid)'}
+      </div>
       <hr class="receipt-divider">
       <div class="receipt-footer">Thank you for shopping!<br>Visit again 😊</div>
     </div>`;
@@ -1570,7 +1671,10 @@ function renderHistory(invoices) {
       <td class="mono">${esc(inv[3] || '—')}</td>
       <td class="mono"><strong>₹${parseFloat(inv[4]||0).toFixed(2)}</strong></td>
       <td class="mono" style="color:var(--accent)">₹${parseFloat(inv[5]||0).toFixed(2)}</td>
-      <td><span class="badge badge-gray">${esc(inv[6] || 'Cash')}</span></td>
+      <td>${String(inv[6]).toLowerCase() === 'credit'
+        ? '<span class="badge badge-credit">💳 Credit</span>'
+        : `<span class="badge badge-gray">${esc(inv[6] || 'Cash')}</span>`
+      }</td>
       <td class="mono">${esc(inv[7] || '—')}</td>
       <td>
         <div style="display:flex;gap:4px;">
@@ -1722,6 +1826,185 @@ async function testConnection() {
   } catch(e) {
     status.textContent = '✕ Failed: ' + e.message; status.style.color = 'var(--accent)'; setConnected(false);
   }
+}
+
+// ════════════════════════════════════════════════
+// CREDIT PAYMENT TOGGLE
+// ════════════════════════════════════════════════
+function onPaymentMethodChange() {
+  const val = document.getElementById('paymentMethod').value;
+  const noteGroup = document.getElementById('creditNoteGroup');
+  if (noteGroup) noteGroup.style.display = val === 'Credit' ? '' : 'none';
+}
+
+// ════════════════════════════════════════════════
+// CREDIT CUSTOMERS
+// ════════════════════════════════════════════════
+let allCreditData = []; // cached for search/export
+
+async function loadCreditCustomers() {
+  // Show loading
+  document.getElementById('creditSummaryBody').innerHTML =
+    '<tr><td colspan="8"><div class="loading"><div class="spinner"></div></div></td></tr>';
+  document.getElementById('creditDetailPanel').style.display = 'none';
+
+  try {
+    // Fetch invoices + items together
+    const [invRes, itemsRes] = await Promise.all([
+      apiCall('getInvoices'),
+      apiCall('getInvoiceItems'),
+    ]);
+
+    const invoices = invRes   ? (invRes.data   || []) : [];
+    const items    = itemsRes ? (itemsRes.data || []) : [];
+
+    // Filter only Credit invoices (col G = paymentMethod)
+    const creditInvoices = invoices.filter(inv => String(inv[6]).toLowerCase() === 'credit');
+
+    // Build customer map
+    const custMap = {};
+    creditInvoices.forEach(inv => {
+      const name  = (String(inv[2] || '')).trim() || 'Unknown Customer';
+      const phone = String(inv[3] || '').trim();
+      const key   = name.toLowerCase();
+      if (!custMap[key]) {
+        custMap[key] = {
+          name,
+          phone,
+          invoiceCount: 0,
+          totalPurchased: 0,
+          totalCredit: 0,
+          lastDate: '',
+          invoices: [],
+        };
+      }
+      const total = parseFloat(inv[4]) || 0;
+      custMap[key].invoiceCount++;
+      custMap[key].totalPurchased += total;
+      custMap[key].totalCredit    += total; // all credit invoices are outstanding
+      const d = inv[1] ? new Date(inv[1]).toLocaleDateString('en-IN') : '';
+      if (d && (!custMap[key].lastDate || d > custMap[key].lastDate)) custMap[key].lastDate = d;
+
+      // Gather items for this invoice
+      const invoiceId  = String(inv[0]);
+      const invItems   = items.filter(it => String(it[0]) === invoiceId);
+      const productList = invItems.map(it => `${esc(String(it[2]))} ×${it[3]}`).join(', ') || '—';
+
+      custMap[key].invoices.push({
+        invoiceId,
+        date:    inv[1] ? new Date(inv[1]).toLocaleDateString('en-IN', {day:'2-digit',month:'2-digit',year:'numeric'}) : '—',
+        total,
+        products: productList,
+        creditNote: String(inv[7] || '').trim(), // cashierName col used as fallback; real note in col H is tricky; we read what's stored
+      });
+    });
+
+    allCreditData = Object.values(custMap).sort((a, b) => b.totalCredit - a.totalCredit);
+
+    // KPIs
+    const totalCredit   = allCreditData.reduce((s, c) => s + c.totalCredit, 0);
+    const totalCust     = allCreditData.length;
+    const totalInvoices = allCreditData.reduce((s, c) => s + c.invoiceCount, 0);
+    const avgCredit     = totalCust ? totalCredit / totalCust : 0;
+
+    document.getElementById('kpiCreditTotal').textContent    = '₹' + totalCredit.toFixed(2);
+    document.getElementById('kpiCreditCount').textContent    = totalCust;
+    document.getElementById('kpiCreditInvoices').textContent = totalInvoices;
+    document.getElementById('kpiCreditAvg').textContent      = '₹' + avgCredit.toFixed(2);
+
+    renderCreditTable(allCreditData);
+
+  } catch(e) {
+    console.error('loadCreditCustomers', e);
+    showToast('Error loading credit data', 'error');
+    document.getElementById('creditSummaryBody').innerHTML =
+      '<tr><td colspan="8" class="empty-state">Failed to load — check connection</td></tr>';
+  }
+}
+
+function renderCreditTable(data) {
+  const body = document.getElementById('creditSummaryBody');
+  if (!data.length) {
+    body.innerHTML = '<tr><td colspan="8"><div class="empty-state"><div class="empty-state-icon">🎉</div>No outstanding credit — all clear!</div></td></tr>';
+    return;
+  }
+  body.innerHTML = data.map((c, i) => `<tr>
+    <td class="mono" style="color:var(--ink3)">${i + 1}</td>
+    <td><strong>${esc(c.name)}</strong></td>
+    <td class="mono">${esc(c.phone || '—')}</td>
+    <td class="mono">${c.invoiceCount}</td>
+    <td class="mono">₹${c.totalPurchased.toFixed(2)}</td>
+    <td class="mono" style="color:#c82020;font-weight:700;">₹${c.totalCredit.toFixed(2)}</td>
+    <td class="mono">${c.lastDate || '—'}</td>
+    <td>
+      <button class="btn btn-secondary btn-sm" onclick="showCreditDetail('${esc(c.name.replace(/'/g,"\\'"  ))}')">📋 View</button>
+    </td>
+  </tr>`).join('');
+}
+
+function filterCreditTable() {
+  const q = document.getElementById('creditSearch').value.toLowerCase().trim();
+  if (!q) { renderCreditTable(allCreditData); return; }
+  renderCreditTable(allCreditData.filter(c =>
+    c.name.toLowerCase().includes(q) || (c.phone && c.phone.includes(q))
+  ));
+}
+
+function showCreditDetail(name) {
+  const cust = allCreditData.find(c => c.name === name);
+  if (!cust) return;
+  document.getElementById('creditDetailTitle').textContent = `💳 Credit Invoices — ${name}`;
+  const body = document.getElementById('creditDetailBody');
+  body.innerHTML = cust.invoices.map(inv => `<tr>
+    <td class="mono" style="font-size:11px;">${esc(inv.invoiceId)}</td>
+    <td class="mono">${esc(inv.date)}</td>
+    <td style="font-size:12px;">${inv.products}</td>
+    <td class="mono" style="color:#c82020;font-weight:700;">₹${inv.total.toFixed(2)}</td>
+    <td style="font-size:12px;color:var(--ink3);">${esc(inv.creditNote || '—')}</td>
+    <td><span class="badge badge-credit">CREDIT DUE</span></td>
+  </tr>`).join('');
+  const panel = document.getElementById('creditDetailPanel');
+  panel.style.display = '';
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function closeCreditDetail() {
+  document.getElementById('creditDetailPanel').style.display = 'none';
+}
+
+function exportCreditToExcel() {
+  if (!allCreditData.length) { showToast('No credit data to export', 'error'); return; }
+  const e   = v => String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const hdr = (...cols) => `<tr>${cols.map(c=>`<th style="background:#1a1208;color:#fff;font-weight:bold;padding:6px 10px;border:1px solid #999;">${e(c)}</th>`).join('')}</tr>`;
+  const row = (bg, ...cols) => `<tr>${cols.map(c=>`<td style="background:${bg};padding:5px 10px;border:1px solid #ddd;">${e(c)}</td>`).join('')}</tr>`;
+
+  let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="UTF-8"></head><body><table>`;
+  html += `<tr><td colspan="10" style="font-size:18px;font-weight:bold;padding:10px 0;color:#c82020;">💳 R K GENERAL STORE — Credit Customers Report</td></tr>`;
+  html += `<tr><td colspan="10" style="color:#888;font-size:12px;padding-bottom:8px;">Generated: ${new Date().toLocaleString('en-IN')}</td></tr>`;
+  html += `<tr><td colspan="10">&nbsp;</td></tr>`;
+  html += `<tr><td colspan="10" style="font-weight:700;font-size:13px;color:#1a1208;padding:8px 0;">Customer Credit Summary</td></tr>`;
+  html += hdr('#','Customer Name','Phone','Total Invoices','Total Purchased (₹)','Total Credit Due (₹)','Last Credit Date');
+  allCreditData.forEach((c, i) => {
+    html += row(i % 2 === 0 ? '#fff8f8' : '#fff', i+1, c.name, c.phone||'—', c.invoiceCount, c.totalPurchased.toFixed(2), c.totalCredit.toFixed(2), c.lastDate||'—');
+  });
+  html += `<tr><td colspan="10">&nbsp;</td></tr>`;
+  html += `<tr><td colspan="10" style="font-weight:700;font-size:13px;color:#1a1208;padding:8px 0;">All Credit Invoice Details</td></tr>`;
+  html += hdr('Customer','Invoice ID','Date','Products','Total Amount (₹)','Credit Note','Status');
+  allCreditData.forEach(c => {
+    c.invoices.forEach(inv => {
+      html += row('#fff8f8', c.name, inv.invoiceId, inv.date, inv.products, inv.total.toFixed(2), inv.creditNote||'—', 'CREDIT DUE');
+    });
+  });
+  html += `</table></body></html>`;
+
+  const blob = new Blob([html], { type:'application/vnd.ms-excel;charset=utf-8' });
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = `RK_CreditCustomers_${new Date().toISOString().split('T')[0]}.xls`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast('✓ Credit report exported', 'success');
 }
 
 // ════════════════════════════════════════════════
